@@ -231,14 +231,15 @@ def convert(pptx_path, output_path=None, external_assets=None):
             # Table
             if shape.has_table:
                 table = shape.table
-                table_html = '<table style="width:100%;border-collapse:collapse;font-size:0.9em">'
+                table_parts = ['<table style="width:100%;border-collapse:collapse;font-size:0.9em">']
                 for row in table.rows:
-                    table_html += "<tr>"
+                    table_parts.append("<tr>")
                     for cell in row.cells:
                         cell_text = cell.text.replace("&", "&amp;").replace("<", "&lt;")
-                        table_html += f'<td style="border:1px solid #ccc;padding:6px 10px">{cell_text}</td>'
-                    table_html += "</tr>"
-                table_html += "</table>"
+                        table_parts.append(f'<td style="border:1px solid #ccc;padding:6px 10px">{cell_text}</td>')
+                    table_parts.append("</tr>")
+                table_parts.append("</table>")
+                table_html = "".join(table_parts)
                 elements.append(f'<div style="{pos_style};overflow:auto">{table_html}</div>')
                 continue
 
