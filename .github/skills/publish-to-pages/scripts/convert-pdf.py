@@ -10,6 +10,7 @@ Requirements: poppler-utils (pdftoppm)
 import argparse
 import base64
 import glob
+import html
 import os
 import subprocess
 import sys
@@ -97,13 +98,14 @@ def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, exter
             )
 
     title = Path(pdf_path).stem.replace("-", " ").replace("_", " ")
+    safe_title = html.escape(title)
 
     html = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{title}</title>
+<title>{safe_title}</title>
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 html, body {{ height: 100%; overflow: hidden; background: #000; }}
