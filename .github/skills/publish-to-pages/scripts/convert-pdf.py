@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -27,6 +28,39 @@ def get_page_count(pdf_path):
     except:
         pass
     return None
+
+
+def _process_single_page(args):
+    i, page_path, external_assets, assets_dir = args
+    with open(page_path, "rb") as f:
+        page_bytes = f.read()
+
+    if external_assets:
+        img_name = f"img-{i:03d}.png"
+        (assets_dir / img_name).write_bytes(page_bytes)
+        src = f"assets/{img_name}"
+    else:
+        b64 = base64.b64encode(page_bytes).decode()
+        src = f"data:image/png;base64,{b64}"
+
+    html = (
+        f'<section class="slide">'
+        f'<div class="slide-inner">'
+        f'<img src="{src}" alt="Page {i}">'
+        f'</div></section>'
+    )
+    return i, html
+
+
+def process_pages(pages, external_assets, assets_dir=None):
+    items = [(i, page_path, external_assets, assets_dir) for i, page_path in enumerate(pages, 1)]
+    # Limit max workers to avoid excessive memory or thread overhead
+    max_workers = min(32, (os.cpu_count() or 1) + 4)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(_process_single_page, items))
+
+    results.sort(key=lambda x: x[0])
+    return [html for _, html in results]
 
 
 def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, external_assets=None):
@@ -57,6 +91,7 @@ def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, exter
     output = output_path or str(Path(pdf_path).with_suffix('.html'))
     output_dir = Path(output).parent
 
+    assets_dir = None
     if external_assets:
         assets_dir = output_dir / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
@@ -76,25 +111,7 @@ def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, exter
             print("Error: No pages rendered from PDF")
             sys.exit(1)
 
-        slides_html = []
-        for i, page_path in enumerate(pages, 1):
-            with open(page_path, "rb") as f:
-                page_bytes = f.read()
-
-            if external_assets:
-                img_name = f"img-{i:03d}.png"
-                (assets_dir / img_name).write_bytes(page_bytes)
-                src = f"assets/{img_name}"
-            else:
-                b64 = base64.b64encode(page_bytes).decode()
-                src = f"data:image/png;base64,{b64}"
-
-            slides_html.append(
-                f'<section class="slide">'
-                f'<div class="slide-inner">'
-                f'<img src="{src}" alt="Page {i}">'
-                f'</div></section>'
-            )
+        slides_html = process_pages(pages, external_assets, assets_dir)
 
     title = Path(pdf_path).stem.replace("-", " ").replace("_", " ")
 
