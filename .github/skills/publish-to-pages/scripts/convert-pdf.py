@@ -24,81 +24,68 @@ def get_page_count(pdf_path):
         for line in result.stdout.splitlines():
             if line.startswith("Pages:"):
                 return int(line.split(":")[1].strip())
-    except:
+    except Exception:
         pass
     return None
 
 
-def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, external_assets=None):
-    pdf_path = str(Path(pdf_path).resolve())
-    if not Path(pdf_path).exists():
-        print(f"Error: {pdf_path} not found")
-        sys.exit(1)
-
+def check_pdftoppm_installed():
+    """Verify that pdftoppm is installed."""
     if subprocess.run(["which", "pdftoppm"], capture_output=True).returncode != 0:
         print("Error: pdftoppm not found. Install poppler-utils:")
         print("  apt install poppler-utils  # Debian/Ubuntu")
         print("  brew install poppler       # macOS")
         sys.exit(1)
 
-    file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
 
-    if file_size_mb > 150:
-        print(f"WARNING: PDF is {file_size_mb:.0f}MB — conversion may be slow and memory-intensive.")
+def render_pdf_to_images(pdf_path: str, tmpdir: str, dpi: int = 150) -> list[str]:
+    """Render PDF pages as PNG files using pdftoppm."""
+    prefix = os.path.join(tmpdir, "page")
+    result = subprocess.run(
+        ["pdftoppm", "-png", "-r", str(dpi), pdf_path, prefix],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"Error converting PDF: {result.stderr}")
+        sys.exit(1)
 
-    page_count = get_page_count(pdf_path)
+    pages = sorted(glob.glob(f"{prefix}-*.png"))
+    if not pages:
+        print("Error: No pages rendered from PDF")
+        sys.exit(1)
 
-    # Auto-detect external assets mode
-    if external_assets is None:
-        external_assets = file_size_mb > 20 or (page_count is not None and page_count > 50)
+    return pages
+
+
+def build_slide_sections(pages: list[str], external_assets: bool, assets_dir: Path | None = None) -> list[str]:
+    """Build HTML slide section elements for each rendered image page."""
+    slides_html = []
+    for i, page_path in enumerate(pages, 1):
+        with open(page_path, "rb") as f:
+            page_bytes = f.read()
+
         if external_assets:
-            print(f"Auto-enabling external assets mode (file: {file_size_mb:.1f}MB, pages: {page_count or 'unknown'})")
+            if assets_dir is None:
+                raise ValueError("assets_dir must be provided when external_assets is True")
+            img_name = f"img-{i:03d}.png"
+            (assets_dir / img_name).write_bytes(page_bytes)
+            src = f"assets/{img_name}"
+        else:
+            b64 = base64.b64encode(page_bytes).decode()
+            src = f"data:image/png;base64,{b64}"
 
-    output = output_path or str(Path(pdf_path).with_suffix('.html'))
-    output_dir = Path(output).parent
-
-    if external_assets:
-        assets_dir = output_dir / "assets"
-        assets_dir.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        prefix = os.path.join(tmpdir, "page")
-        result = subprocess.run(
-            ["pdftoppm", "-png", "-r", str(dpi), pdf_path, prefix],
-            capture_output=True, text=True
+        slides_html.append(
+            f'<section class="slide">'
+            f'<div class="slide-inner">'
+            f'<img src="{src}" alt="Page {i}">'
+            f'</div></section>'
         )
-        if result.returncode != 0:
-            print(f"Error converting PDF: {result.stderr}")
-            sys.exit(1)
+    return slides_html
 
-        pages = sorted(glob.glob(f"{prefix}-*.png"))
-        if not pages:
-            print("Error: No pages rendered from PDF")
-            sys.exit(1)
 
-        slides_html = []
-        for i, page_path in enumerate(pages, 1):
-            with open(page_path, "rb") as f:
-                page_bytes = f.read()
-
-            if external_assets:
-                img_name = f"img-{i:03d}.png"
-                (assets_dir / img_name).write_bytes(page_bytes)
-                src = f"assets/{img_name}"
-            else:
-                b64 = base64.b64encode(page_bytes).decode()
-                src = f"data:image/png;base64,{b64}"
-
-            slides_html.append(
-                f'<section class="slide">'
-                f'<div class="slide-inner">'
-                f'<img src="{src}" alt="Page {i}">'
-                f'</div></section>'
-            )
-
-    title = Path(pdf_path).stem.replace("-", " ").replace("_", " ")
-
-    html = f'''<!DOCTYPE html>
+def generate_presentation_html(title: str, slides_html: list[str]) -> str:
+    """Generate full HTML presentation document string."""
+    return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -146,6 +133,45 @@ document.addEventListener('click', e => {{
 show(0);
 </script>
 </body></html>'''
+
+
+def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, external_assets=None):
+    """Convert PDF to HTML presentation using pdftoppm."""
+    pdf_path = str(Path(pdf_path).resolve())
+    if not Path(pdf_path).exists():
+        print(f"Error: {pdf_path} not found")
+        sys.exit(1)
+
+    check_pdftoppm_installed()
+
+    file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+
+    if file_size_mb > 150:
+        print(f"WARNING: PDF is {file_size_mb:.0f}MB — conversion may be slow and memory-intensive.")
+
+    page_count = get_page_count(pdf_path)
+
+    # Auto-detect external assets mode
+    if external_assets is None:
+        external_assets = file_size_mb > 20 or (page_count is not None and page_count > 50)
+        if external_assets:
+            print(f"Auto-enabling external assets mode (file: {file_size_mb:.1f}MB, pages: {page_count or 'unknown'})")
+
+    output = output_path or str(Path(pdf_path).with_suffix('.html'))
+    output_dir = Path(output).parent
+
+    assets_dir = None
+    if external_assets:
+        assets_dir = output_dir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pages = render_pdf_to_images(pdf_path, tmpdir, dpi=dpi)
+        slides_html = build_slide_sections(pages, external_assets, assets_dir)
+
+    title = Path(pdf_path).stem.replace("-", " ").replace("_", " ")
+
+    html = generate_presentation_html(title, slides_html)
 
     Path(output).write_text(html, encoding='utf-8')
     output_size = os.path.getsize(output)
