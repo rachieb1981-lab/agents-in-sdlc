@@ -167,118 +167,83 @@ CONTENT_TYPE_TO_EXT = {
 }
 
 
-def convert(pptx_path, output_path=None, external_assets=None):
-    _ensure_pptx()
-    from pptx import Presentation
+def _render_shape_element(shape, slide_width, slide_height, external_assets, assets_dir, img_counter_ref):
+    """Render a single shape in a slide to an HTML element string.
 
-    file_size_mb = os.path.getsize(pptx_path) / (1024 * 1024)
+    `img_counter_ref` is a single-element list [count] acting as a mutable integer reference.
+    Returns HTML string or None if shape cannot be rendered.
+    """
+    left, top, width, height = get_shape_position(shape, slide_width, slide_height)
+    pos_style = f"position:absolute;left:{left:.1f}%;top:{top:.1f}%;width:{width:.1f}%;height:{height:.1f}%"
 
-    # Pre-flight warning for very large files
-    if file_size_mb > 150:
-        print(f"WARNING: File is {file_size_mb:.0f}MB — consider using PDF conversion (convert-pdf.py) for better performance.")
+    # Image
+    if shape.shape_type == 13 or hasattr(shape, "image"):
+        blob, content_type = extract_image_data(shape)
+        if blob:
+            img_counter_ref[0] += 1
+            if external_assets:
+                ext = CONTENT_TYPE_TO_EXT.get(content_type, '.png')
+                img_name = f"img-{img_counter_ref[0]:03d}{ext}"
+                (assets_dir / img_name).write_bytes(blob)
+                src = f"assets/{img_name}"
+            else:
+                b64 = base64.b64encode(blob).decode('utf-8')
+                src = f"data:{content_type};base64,{b64}"
+            return (
+                f'<div style="{pos_style};display:flex;align-items:center;justify-content:center">'
+                f'<img src="{src}" style="max-width:100%;max-height:100%;object-fit:contain" alt="">'
+                f'</div>'
+            )
 
-    prs = Presentation(pptx_path)
-    slide_width = prs.slide_width
-    slide_height = prs.slide_height
-    aspect_ratio = slide_width / slide_height if slide_height else 16/9
+    # Table
+    if shape.has_table:
+        table = shape.table
+        table_html = '<table style="width:100%;border-collapse:collapse;font-size:0.9em">'
+        for row in table.rows:
+            table_html += "<tr>"
+            for cell in row.cells:
+                cell_text = cell.text.replace("&", "&amp;").replace("<", "&lt;")
+                table_html += f'<td style="border:1px solid #ccc;padding:6px 10px">{cell_text}</td>'
+            table_html += "</tr>"
+        table_html += "</table>"
+        return f'<div style="{pos_style};overflow:auto">{table_html}</div>'
 
-    total_images = count_images(prs)
-
-    # Auto-detect external assets mode
-    if external_assets is None:
-        external_assets = file_size_mb > 20 or total_images > 50
-        if external_assets:
-            print(f"Auto-enabling external assets mode (file: {file_size_mb:.1f}MB, images: {total_images})")
-
-    output = output_path or str(Path(pptx_path).with_suffix('.html'))
-    output_dir = Path(output).parent
-
-    if external_assets:
-        assets_dir = output_dir / "assets"
-        assets_dir.mkdir(parents=True, exist_ok=True)
-
-    img_counter = 0
-    slides_html = []
-
-    for i, slide in enumerate(prs.slides, 1):
-        bg_style = get_slide_background(slide, prs)
-        elements = []
-
-        for shape in sorted(slide.shapes, key=lambda s: (s.top or 0, s.left or 0)):
-            left, top, width, height = get_shape_position(shape, slide_width, slide_height)
-            pos_style = f"position:absolute;left:{left:.1f}%;top:{top:.1f}%;width:{width:.1f}%;height:{height:.1f}%"
-
-            # Image
-            if shape.shape_type == 13 or hasattr(shape, "image"):
-                blob, content_type = extract_image_data(shape)
-                if blob:
-                    img_counter += 1
-                    if external_assets:
-                        ext = CONTENT_TYPE_TO_EXT.get(content_type, '.png')
-                        img_name = f"img-{img_counter:03d}{ext}"
-                        (assets_dir / img_name).write_bytes(blob)
-                        src = f"assets/{img_name}"
-                    else:
-                        b64 = base64.b64encode(blob).decode('utf-8')
-                        src = f"data:{content_type};base64,{b64}"
-                    elements.append(
-                        f'<div style="{pos_style};display:flex;align-items:center;justify-content:center">'
-                        f'<img src="{src}" style="max-width:100%;max-height:100%;object-fit:contain" alt="">'
-                        f'</div>'
-                    )
-                    continue
-
-            # Table
-            if shape.has_table:
-                table = shape.table
-                table_html = '<table style="width:100%;border-collapse:collapse;font-size:0.9em">'
-                for row in table.rows:
-                    table_html += "<tr>"
-                    for cell in row.cells:
-                        cell_text = cell.text.replace("&", "&amp;").replace("<", "&lt;")
-                        table_html += f'<td style="border:1px solid #ccc;padding:6px 10px">{cell_text}</td>'
-                    table_html += "</tr>"
-                table_html += "</table>"
-                elements.append(f'<div style="{pos_style};overflow:auto">{table_html}</div>')
-                continue
-
-            # Text
-            if shape.has_text_frame:
-                text_parts = []
-                for para in shape.text_frame.paragraphs:
-                    rendered = render_paragraph(para)
-                    if rendered:
-                        text_parts.append(rendered)
-                if text_parts:
-                    content = "".join(text_parts)
-                    fill = get_shape_fill(shape)
-                    fill_style = f"background-color:{fill};padding:1em;border-radius:8px;" if fill else ""
-                    elements.append(
-                        f'<div style="{pos_style};{fill_style}overflow:hidden;display:flex;flex-direction:column;justify-content:center">'
-                        f'{content}</div>'
-                    )
-                continue
-
-            # Decorative shape with fill
+    # Text
+    if shape.has_text_frame:
+        text_parts = []
+        for para in shape.text_frame.paragraphs:
+            rendered = render_paragraph(para)
+            if rendered:
+                text_parts.append(rendered)
+        if text_parts:
+            content = "".join(text_parts)
             fill = get_shape_fill(shape)
-            if fill:
-                elements.append(
-                    f'<div style="{pos_style};background-color:{fill};border-radius:4px"></div>'
-                )
+            fill_style = f"background-color:{fill};padding:1em;border-radius:8px;" if fill else ""
+            return (
+                f'<div style="{pos_style};{fill_style}overflow:hidden;display:flex;flex-direction:column;justify-content:center">'
+                f'{content}</div>'
+            )
 
-        slide_content = "\n".join(elements)
-        slides_html.append(
-            f'<section class="slide" style="{bg_style}">\n<div class="slide-inner">\n{slide_content}\n</div>\n</section>'
-        )
+    # Decorative shape with fill
+    fill = get_shape_fill(shape)
+    if fill:
+        return f'<div style="{pos_style};background-color:{fill};border-radius:4px"></div>'
 
-    title = "Presentation"
+    return None
+
+
+def _extract_presentation_title(prs):
+    """Extract presentation title from the first slide if available."""
     if prs.slides:
         for shape in prs.slides[0].shapes:
             if hasattr(shape, "text") and shape.text.strip() and len(shape.text.strip()) < 150:
-                title = shape.text.strip()
-                break
+                return shape.text.strip()
+    return "Presentation"
 
-    html = f'''<!DOCTYPE html>
+
+def _generate_html_template(title, aspect_ratio, slides_html):
+    """Generate the full HTML markup for the presentation."""
+    return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -346,13 +311,67 @@ scaleSlides();
 </script>
 </body></html>'''
 
+
+def convert(pptx_path, output_path=None, external_assets=None):
+    _ensure_pptx()
+    from pptx import Presentation
+
+    file_size_mb = os.path.getsize(pptx_path) / (1024 * 1024)
+
+    # Pre-flight warning for very large files
+    if file_size_mb > 150:
+        print(f"WARNING: File is {file_size_mb:.0f}MB — consider using PDF conversion (convert-pdf.py) for better performance.")
+
+    prs = Presentation(pptx_path)
+    slide_width = prs.slide_width
+    slide_height = prs.slide_height
+    aspect_ratio = slide_width / slide_height if slide_height else 16/9
+
+    total_images = count_images(prs)
+
+    # Auto-detect external assets mode
+    if external_assets is None:
+        external_assets = file_size_mb > 20 or total_images > 50
+        if external_assets:
+            print(f"Auto-enabling external assets mode (file: {file_size_mb:.1f}MB, images: {total_images})")
+
+    output = output_path or str(Path(pptx_path).with_suffix('.html'))
+    output_dir = Path(output).parent
+
+    assets_dir = None
+    if external_assets:
+        assets_dir = output_dir / "assets"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+    img_counter_ref = [0]
+    slides_html = []
+
+    for i, slide in enumerate(prs.slides, 1):
+        bg_style = get_slide_background(slide, prs)
+        elements = []
+
+        for shape in sorted(slide.shapes, key=lambda s: (s.top or 0, s.left or 0)):
+            element_html = _render_shape_element(
+                shape, slide_width, slide_height, external_assets, assets_dir, img_counter_ref
+            )
+            if element_html:
+                elements.append(element_html)
+
+        slide_content = "\n".join(elements)
+        slides_html.append(
+            f'<section class="slide" style="{bg_style}">\n<div class="slide-inner">\n{slide_content}\n</div>\n</section>'
+        )
+
+    title = _extract_presentation_title(prs)
+    html = _generate_html_template(title, aspect_ratio, slides_html)
+
     Path(output).write_text(html, encoding='utf-8')
     output_size = os.path.getsize(output)
 
     # Summary
     print(f"Converted to: {output}")
     print(f"Slides: {len(slides_html)}")
-    print(f"Images: {img_counter}")
+    print(f"Images: {img_counter_ref[0]}")
     print(f"Output size: {output_size / (1024*1024):.1f}MB")
     print(f"External assets: {'yes' if external_assets else 'no'}")
 
