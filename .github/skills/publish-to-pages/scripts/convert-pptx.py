@@ -5,7 +5,6 @@ Supports external assets mode for large files to avoid huge single-file HTML.
 """
 import argparse
 import base64
-import io
 import os
 import re
 import sys
