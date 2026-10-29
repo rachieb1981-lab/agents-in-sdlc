@@ -12,10 +12,18 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from pptx.enum.text import PP_ALIGN
+    from pptx.oxml.ns import qn
+except ImportError:
+    PP_ALIGN = None
+    qn = None
+
 def _ensure_pptx():
     try:
         from pptx import Presentation
         from pptx.enum.text import PP_ALIGN
+        from pptx.oxml.ns import qn
         return True
     except ImportError:
         print("ERROR: python-pptx not installed. Install with: pip install python-pptx")
@@ -52,7 +60,6 @@ def get_text_style(run):
 
 
 def get_alignment(paragraph):
-    from pptx.enum.text import PP_ALIGN
     try:
         align = paragraph.alignment
         if align == PP_ALIGN.CENTER:
@@ -78,7 +85,6 @@ def get_shape_position(shape, slide_width, slide_height):
 
 
 def get_slide_background(slide, prs):
-    from pptx.oxml.ns import qn
     for source in [slide, slide.slide_layout]:
         try:
             bg_el = source.background._element
@@ -92,7 +98,6 @@ def get_slide_background(slide, prs):
 
 
 def get_shape_fill(shape):
-    from pptx.oxml.ns import qn
     try:
         sp_pr = shape._element.find(qn('p:spPr'))
         if sp_pr is None:
