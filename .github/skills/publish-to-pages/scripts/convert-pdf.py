@@ -21,7 +21,7 @@ from pathlib import Path
 def get_page_count(pdf_path):
     """Get page count using pdfinfo if available."""
     try:
-        result = subprocess.run(["pdfinfo", pdf_path], capture_output=True, text=True)
+        result = subprocess.run(["pdfinfo", "--", pdf_path], capture_output=True, text=True)
         for line in result.stdout.splitlines():
             if line.startswith("Pages:"):
                 return int(line.split(":")[1].strip())
@@ -65,7 +65,7 @@ def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, exter
     with tempfile.TemporaryDirectory() as tmpdir:
         prefix = os.path.join(tmpdir, "page")
         result = subprocess.run(
-            ["pdftoppm", "-png", "-r", str(dpi), pdf_path, prefix],
+            ["pdftoppm", "-png", "-r", str(dpi), "--", pdf_path, prefix],
             capture_output=True, text=True
         )
         if result.returncode != 0:
