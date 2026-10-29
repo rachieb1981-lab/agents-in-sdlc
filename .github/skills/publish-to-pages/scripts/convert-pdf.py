@@ -10,6 +10,7 @@ Requirements: poppler-utils (pdftoppm)
 import argparse
 import base64
 import glob
+import html
 import os
 import subprocess
 import sys
@@ -96,9 +97,9 @@ def convert(pdf_path: str, output_path: str | None = None, dpi: int = 150, exter
                 f'</div></section>'
             )
 
-    title = Path(pdf_path).stem.replace("-", " ").replace("_", " ")
+    title = html.escape(Path(pdf_path).stem.replace("-", " ").replace("_", " "))
 
-    html = f'''<!DOCTYPE html>
+    html_content = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -147,7 +148,7 @@ show(0);
 </script>
 </body></html>'''
 
-    Path(output).write_text(html, encoding='utf-8')
+    Path(output).write_text(html_content, encoding='utf-8')
     output_size = os.path.getsize(output)
 
     print(f"Converted to: {output}")

@@ -5,6 +5,7 @@ Supports external assets mode for large files to avoid huge single-file HTML.
 """
 import argparse
 import base64
+import html
 import io
 import os
 import re
@@ -278,12 +279,12 @@ def convert(pptx_path, output_path=None, external_assets=None):
                 title = shape.text.strip()
                 break
 
-    html = f'''<!DOCTYPE html>
+    html_content = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{title}</title>
+<title>{html.escape(title)}</title>
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 html, body {{ height: 100%; overflow: hidden; background: #000; }}
@@ -346,7 +347,7 @@ scaleSlides();
 </script>
 </body></html>'''
 
-    Path(output).write_text(html, encoding='utf-8')
+    Path(output).write_text(html_content, encoding='utf-8')
     output_size = os.path.getsize(output)
 
     # Summary
